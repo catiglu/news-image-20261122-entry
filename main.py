@@ -3,12 +3,11 @@
 Copies the pre-rendered poster (entry.png, built by make_image.py) to the
 grader's output directory. No network, no randomness: identical bytes every
 run. Validates the artifact (PNG magic, 1024x1024, <= 1 MiB) before writing,
-and replaces the destination atomically.
+then writes it straight to /output/entry.png so the grader can read it.
 """
 import os
 import struct
 import sys
-import tempfile
 
 MAX_BYTES = 1024 * 1024
 MAX_DIM = 1024
@@ -30,15 +29,17 @@ def main() -> int:
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(out_dir, exist_ok=True)
     dst = os.path.join(out_dir, "entry.png")
-    fd, tmp = tempfile.mkstemp(dir=out_dir, suffix=".tmp")
+    # Write straight to the final name: /output then never holds a second file
+    # (no tempfile) and both runs write identical bytes. Then make the file
+    # world-readable: tempfile.mkstemp creates a 0600 file and os.replace keeps
+    # that mode, which left the grader (a different uid) with EACCES on
+    # entry.png and tripped the "output folder broke a rule" failure.
+    with open(src, "rb") as s, open(dst, "wb") as fh:
+        fh.write(s.read())
     try:
-        with os.fdopen(fd, "wb") as fh, open(src, "rb") as s:
-            fh.write(s.read())
-        os.replace(tmp, dst)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+        os.chmod(dst, 0o644)
+    except OSError:
+        pass
     print("wrote", dst, os.path.getsize(dst), "bytes")
     return 0
 
